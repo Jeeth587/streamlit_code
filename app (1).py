@@ -212,7 +212,7 @@ def canteen_page():
 # ================== MAIN APP ==================
 
 def main_app():
-    def main_app():
+
         with st.sidebar:
             st.markdown(f"### 👋 {st.session_state.username}")
             page = st.radio("Navigate", ["Attendance", "Canteen Dashboard"])
