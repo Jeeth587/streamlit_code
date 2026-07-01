@@ -19,18 +19,16 @@ AIO_KEY = st.secrets["AIO_KEY"]
 
 FEEDS = ["gas-status", "waste-bin", "kitchen-health", "fan-status", "valve-status", "event-log"]
 ATTENDANCE_FILE = "attendance.csv"
-DB_FILE = "School.Data"  # The name of your local SQL database file
+DB_FILE = "School.db"  # The name of your local SQL database file
 
 st.set_page_config(page_title="School Dashboard", page_icon="🏫", layout="wide")
 
 # ================== SQL DATABASE INITIALIZATION ==================
 
 def init_db():
-    """Initializes the SQLite database, creates tables, and seeds initial users if empty."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     
-    # 1. Create the user authentication table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -38,24 +36,18 @@ def init_db():
         )
     """)
     
-    # 2. Check if the table is empty. If it is, seed our default system accounts
+    # Only seed if the table is completely empty
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
+        # 👑 ONLY Admin and Principal are defined here
         default_users = [
-            ("teacher1", "pass123"),
-            ("teacher2", "pass123"),
-            ("admin", "admin123"),
+            ("Admin", "admin123"),
             ("Principal", "principal123456789##")
         ]
-        # Bulk insert layout logic
         cursor.executemany("INSERT INTO users (username, password) VALUES (?, ?)", default_users)
         conn.commit()
-        
     conn.close()
-
-# Spin up the SQL infrastructure on boot execution
 init_db()
-
 # ================== DYNAMIC THEME ENGINE ==================
 
 if "theme" not in st.session_state:
@@ -408,76 +400,35 @@ def canteen_page():
 
 def users_page():
     st.header("🗄️ System Identity Management")
-    st.caption("Administrative Console: View and manage user access profiles.")
-
-    # 🔍 Read current users from SQL
+    
     conn = sqlite3.connect(DB_FILE)
     df_users = pd.read_sql_query("SELECT username FROM users", conn)
     conn.close()
 
-    st.metric(label="Active Accounts", value=len(df_users))
     st.dataframe(df_users, use_container_width=True)
 
     st.divider()
     st.subheader("❌ Remove User Access Profile")
     
-    # 🔒 Protection Engine: Exclude the currently logged-in user so they can't delete themselves
-    active_profile_list = [user for user in df_users["username"].tolist() if user != st.session_state.username]
+    current_user_lower = st.session_state.username.lower()
+    
+    # Filter list: Remove self, and if user is Principal, hide 'admin'
+    active_profile_list = []
+    for user in df_users["username"].tolist():
+        u_lower = user.lower()
+        if u_lower == current_user_lower: continue
+        if current_user_lower == "principal" and u_lower == "admin": continue
+        active_profile_list.append(user)
     
     if active_profile_list:
         target_user = st.selectbox("Select target account to purge:", active_profile_list)
-        
-        st.warning(f"⚠️ Action Warning: Deleting '{target_user}' will permanently remove their credentials from the system file.")
-        
-        if st.button("Confirm Deletion & Purge Account", type="primary"):
+        if st.button("Confirm Deletion", type="primary"):
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
-            
-            # Execute SQL delete operation targeting the exact key variable
             cursor.execute("DELETE FROM users WHERE username = ?", (target_user,))
-            
             conn.commit()
             conn.close()
-            
-            st.success(f"💥 Account '{target_user}' successfully purged from database storage!")
             st.rerun()
-    else:
-        st.info("No auxiliary user records available to target for removal.")
-        
-# ================== MAIN APP ==================
-
-def main_app():
-    with st.sidebar:
-        st.markdown(f"### 👋 {st.session_state.username}")
-        
-        # 🔒 ADVANCED ROLE-BASED ACCESS CONTROL
-        # Normal teachers can only see Attendance. Admin and Principal get extra tabs.
-        if st.session_state.username in ["admin", "Principal"]:
-            page = st.radio("Navigate", ["Attendance", "Canteen Dashboard", "User Management"])
-        else:
-            page = "Attendance"
-            st.info("🔒 Advanced panels are restricted to Management.")
-            
-        st.divider()
-        
-        is_dark = st.toggle("🌙 Dark Mode", value=(st.session_state.theme == "dark"))
-        if is_dark != (st.session_state.theme == "dark"):
-            st.session_state.theme = "dark" if is_dark else "light"
-            st.rerun()
-            
-        st.divider()
-        if st.button("Logout"):
-            st.session_state.logged_in = False
-            st.session_state.username = ""
-            st.rerun()
-
-    # --- ROUTING LOGIC ENGINE ---
-    if page == "Attendance":
-        attendance_page()
-    elif page == "Canteen Dashboard":
-        canteen_page()
-    elif page == "User Management":
-        users_page()
 
 # ================== ROUTER ==================
 
