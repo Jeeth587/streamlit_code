@@ -23,14 +23,13 @@ USERS = {
     "teacher1": "pass123",
     "teacher2": "pass123",
     "admin": "admin123",
-    "Principal":"principal123456789##"
+    "Principal": "principal123456789##"
 }
 
 ATTENDANCE_FILE = "attendance.csv"
 
-st.set_page_config(page_title=" School Dashboard", page_icon="🏫", layout="wide")
+st.set_page_config(page_title="School Dashboard", page_icon="🏫", layout="wide")
 
-# ================== STYLE ==================
 # ================== DYNAMIC THEME ENGINE ==================
 
 if "theme" not in st.session_state:
@@ -40,7 +39,8 @@ def apply_theme():
     if st.session_state.theme == "dark":
         st.markdown("""
         <style>
-        .main { background-color: #0f1116; }
+        .stApp { background-color: #0f1116 !important; }
+        [data-testid="stSidebar"] { background-color: #1a1d29 !important; }
         .metric-card {
             background: linear-gradient(135deg, #1e2130, #262b3d);
             border-radius: 14px;
@@ -63,9 +63,11 @@ def apply_theme():
         </style>
         """, unsafe_allow_html=True)
     else:
+        # ☀️ Clean Light/White Mode
         st.markdown("""
         <style>
-        .main { background-color: #f8f9fa; }
+        .stApp { background-color: #f8f9fa !important; }
+        [data-testid="stSidebar"] { background-color: #ffffff !important; }
         .metric-card {
             background: linear-gradient(135deg, #ffffff, #f1f3f5);
             border-radius: 14px;
@@ -74,8 +76,8 @@ def apply_theme():
             border: 1px solid #dee2e6;
             box-shadow: 0 4px 6px rgba(0,0,0,0.05);
         }
-        .metric-card h3 { color: #495057; font-size: 14px; margin-bottom: 6px; }
-        .metric-card h1 { color: #212529; font-size: 28px; margin: 0; }
+        .metric-card h3 { color: #495057 !important; font-size: 14px; margin-bottom: 6px; }
+        .metric-card h1 { color: #212529 !important; font-size: 28px; margin: 0; }
         .status-ok { color: #2b8a3e; }
         .status-bad { color: #c92a2a; }
         .login-box {
@@ -87,13 +89,15 @@ def apply_theme():
             border: 1px solid #dee2e6;
             box-shadow: 0 10px 15px rgba(0,0,0,0.05);
         }
-        .stMarkdown, p, label, h1, h2, h3, h4, h5, h6 { color: #212529 !important; }
+        /* Forces labels and blocks to override base configurations cleanly */
+        .stMarkdown, p, label, h1, h2, h3, h4, h5, h6, span { color: #212529 !important; }
+        div[data-testid="stRadio"] label { color: #212529 !important; }
         </style>
         """, unsafe_allow_html=True)
 
+# Process theme definitions right before constructing elements
 apply_theme()
-# Run the active theme immediately
-apply_theme()
+
 # ================== SESSION STATE ==================
 
 if "logged_in" not in st.session_state:
@@ -212,27 +216,29 @@ def canteen_page():
 # ================== MAIN APP ==================
 
 def main_app():
-
-        with st.sidebar:
-            st.markdown(f"### 👋 {st.session_state.username}")
-            page = st.radio("Navigate", ["Attendance", "Canteen Dashboard"])
-            st.divider()
+    with st.sidebar:
+        st.markdown(f"### 👋 {st.session_state.username}")
+        page = st.radio("Navigate", ["Attendance", "Canteen Dashboard"])
+        st.divider()
+        
+        is_dark = st.toggle("🌙 Dark Mode", value=(st.session_state.theme == "dark"))
+        if is_dark != (st.session_state.theme == "dark"):
+            st.session_state.theme = "dark" if is_dark else "light"
+            st.rerun()
             
-            is_dark = st.toggle("🌙 Dark Mode", value=(st.session_state.theme == "dark"))
-            if is_dark != (st.session_state.theme == "dark"):
-                st.session_state.theme = "dark" if is_dark else "light"
-                st.rerun()
-                
-            st.divider()
-            if st.button("Logout"):
-                st.session_state.logged_in = False
-                st.session_state.username = ""
-                st.rerun()
+        st.divider()
+        if st.button("Logout"):
+            st.session_state.logged_in = False
+            st.session_state.username = ""
+            st.rerun()
 
-        if page == "Attendance":
-            attendance_page()
-        else:
-            canteen_page()
+    if page == "Attendance":
+        attendance_page()
+    else:
+        canteen_page()
+
+# ================== ROUTER ==================
+
 if st.session_state.logged_in:
     main_app()
 else:
