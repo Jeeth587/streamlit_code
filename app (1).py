@@ -1,8 +1,3 @@
-import streamlit as st
-st.write("🔍 Debugger: What Streamlit actually sees inside your secrets vault:")
-st.write(list(st.secrets.keys()))
-st.markdown("---")
-
 """
 SMART SCHOOL DASHBOARD
 - Login system
@@ -39,7 +34,7 @@ st.set_page_config(page_title=" School Dashboard", page_icon="🏫", layout="wid
 # ================== DYNAMIC THEME ENGINE ==================
 
 if "theme" not in st.session_state:
-    st.session_state.theme = "dark" # Default theme on first boot
+    st.session_state.theme = "dark"
 
 def apply_theme():
     if st.session_state.theme == "dark":
@@ -66,9 +61,8 @@ def apply_theme():
             border: 1px solid #333a52;
         }
         </style>
-        """, unsafe_allow_html=True)[cite: 2]
+        """, unsafe_allow_html=True)
     else:
-        # ☀️ Crisp White/Light Custom Stylesheet
         st.markdown("""
         <style>
         .main { background-color: #f8f9fa; }
@@ -93,11 +87,11 @@ def apply_theme():
             border: 1px solid #dee2e6;
             box-shadow: 0 10px 15px rgba(0,0,0,0.05);
         }
-        /* Forces standard text labels to adjust correctly to light mode backgrounds */
         .stMarkdown, p, label, h1, h2, h3, h4, h5, h6 { color: #212529 !important; }
         </style>
         """, unsafe_allow_html=True)
 
+apply_theme()
 # Run the active theme immediately
 apply_theme()
 # ================== SESSION STATE ==================
