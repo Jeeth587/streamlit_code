@@ -430,6 +430,39 @@ def users_page():
             conn.close()
             st.rerun()
 
+            
+def main_app():
+    with st.sidebar:
+        st.markdown(f"### 👋 {st.session_state.username}")
+        
+        # 🔒 ADVANCED ROLE-BASED ACCESS CONTROL
+        # Normal teachers can only see Attendance. Admin and Principal get extra tabs.
+        if st.session_state.username in ["admin", "Principal"]:
+            page = st.radio("Navigate", ["Attendance", "Canteen Dashboard", "User Management"])
+        else:
+            page = "Attendance"
+            st.info("🔒 Advanced panels are restricted to Management.")
+            
+        st.divider()
+        
+        is_dark = st.toggle("🌙 Dark Mode", value=(st.session_state.theme == "dark"))
+        if is_dark != (st.session_state.theme == "dark"):
+            st.session_state.theme = "dark" if is_dark else "light"
+            st.rerun()
+            
+        st.divider()
+        if st.button("Logout"):
+            st.session_state.logged_in = False
+            st.session_state.username = ""
+            st.rerun()
+
+    # --- ROUTING LOGIC ENGINE ---
+    if page == "Attendance":
+        attendance_page()
+    elif page == "Canteen Dashboard":
+        canteen_page()
+    elif page == "User Management":
+        users_page()
 # ================== ROUTER ==================
 
 if st.session_state.logged_in:
