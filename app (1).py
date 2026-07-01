@@ -402,20 +402,40 @@ def canteen_page():
     st.caption("Live data pushed via MQTT from Adafruit IO — updates automatically when the ESP publishes.")
     if st.button("🔄 Refresh"):
         st.rerun()
+# ================== USER MANAGEMENT PAGE ==================
 
+def users_page():
+    st.header("🗄️ Registered System Users")
+    st.caption("This administrative view lists all accounts currently stored in the SQLite database.")
+
+    # 🔍 Connect to DB and fetch usernames
+    conn = sqlite3.connect(DB_FILE)
+    
+    # We select only the 'username' column for data privacy (hiding the passwords)
+    df_users = pd.read_sql_query("SELECT username FROM users", conn)
+    conn.close()
+
+    # Display total account count metric
+    st.metric(label="Total Registered Accounts", value=len(df_users))
+
+    # Render data table layout
+    st.subheader("Active User Database Rows")
+    st.dataframe(df_users, use_container_width=True)
+
+    
 # ================== MAIN APP ==================
 
 def main_app():
     with st.sidebar:
         st.markdown(f"### 👋 {st.session_state.username}")
         
-        # 🔒 ROLE-BASED ACCESS CONTROL (RBAC)
-        # Only Admin and Principal are allowed to view the Canteen Dashboard
+        # 🔒 ADVANCED ROLE-BASED ACCESS CONTROL
+        # Normal teachers can only see Attendance. Admin and Principal get extra tabs.
         if st.session_state.username in ["admin", "Principal"]:
-            page = st.radio("Navigate", ["Attendance", "Canteen Dashboard"])
+            page = st.radio("Navigate", ["Attendance", "Canteen Dashboard", "User Management"])
         else:
             page = "Attendance"
-            st.info("🔒 Canteen Dashboard is restricted to Management.")
+            st.info("🔒 Advanced panels are restricted to Management.")
             
         st.divider()
         
@@ -430,10 +450,13 @@ def main_app():
             st.session_state.username = ""
             st.rerun()
 
+    # --- ROUTING LOGIC ENGINE ---
     if page == "Attendance":
         attendance_page()
-    else:
+    elif page == "Canteen Dashboard":
         canteen_page()
+    elif page == "User Management":
+        users_page()
 
 # ================== ROUTER ==================
 
