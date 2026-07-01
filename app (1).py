@@ -1,3 +1,8 @@
+import streamlit as st
+st.write("🔍 Debugger: What Streamlit actually sees inside your secrets vault:")
+st.write(list(st.secrets.keys()))
+st.markdown("---")
+
 """
 SMART SCHOOL DASHBOARD
 - Login system
@@ -23,39 +28,78 @@ USERS = {
     "teacher1": "pass123",
     "teacher2": "pass123",
     "admin": "admin123",
+    "Principal":"principal123456789##"
 }
 
 ATTENDANCE_FILE = "attendance.csv"
 
-st.set_page_config(page_title="Smart School Dashboard", page_icon="🏫", layout="wide")
+st.set_page_config(page_title=" School Dashboard", page_icon="🏫", layout="wide")
 
 # ================== STYLE ==================
+# ================== DYNAMIC THEME ENGINE ==================
 
-st.markdown("""
-<style>
-.main { background-color: #0f1116; }
-.metric-card {
-    background: linear-gradient(135deg, #1e2130, #262b3d);
-    border-radius: 14px;
-    padding: 18px;
-    text-align: center;
-    border: 1px solid #333a52;
-}
-.metric-card h3 { color: #9aa4c7; font-size: 14px; margin-bottom: 6px; }
-.metric-card h1 { color: #ffffff; font-size: 28px; margin: 0; }
-.status-ok { color: #3ddc97; }
-.status-bad { color: #ff5c5c; }
-.login-box {
-    max-width: 380px;
-    margin: 60px auto;
-    padding: 30px;
-    border-radius: 16px;
-    background: #1a1d29;
-    border: 1px solid #333a52;
-}
-</style>
-""", unsafe_allow_html=True)
+if "theme" not in st.session_state:
+    st.session_state.theme = "dark" # Default theme on first boot
 
+def apply_theme():
+    if st.session_state.theme == "dark":
+        st.markdown("""
+        <style>
+        .main { background-color: #0f1116; }
+        .metric-card {
+            background: linear-gradient(135deg, #1e2130, #262b3d);
+            border-radius: 14px;
+            padding: 18px;
+            text-align: center;
+            border: 1px solid #333a52;
+        }
+        .metric-card h3 { color: #9aa4c7; font-size: 14px; margin-bottom: 6px; }
+        .metric-card h1 { color: #ffffff; font-size: 28px; margin: 0; }
+        .status-ok { color: #3ddc97; }
+        .status-bad { color: #ff5c5c; }
+        .login-box {
+            max-width: 380px;
+            margin: 60px auto;
+            padding: 30px;
+            border-radius: 16px;
+            background: #1a1d29;
+            border: 1px solid #333a52;
+        }
+        </style>
+        """, unsafe_allow_html=True)[cite: 2]
+    else:
+        # ☀️ Crisp White/Light Custom Stylesheet
+        st.markdown("""
+        <style>
+        .main { background-color: #f8f9fa; }
+        .metric-card {
+            background: linear-gradient(135deg, #ffffff, #f1f3f5);
+            border-radius: 14px;
+            padding: 18px;
+            text-align: center;
+            border: 1px solid #dee2e6;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        .metric-card h3 { color: #495057; font-size: 14px; margin-bottom: 6px; }
+        .metric-card h1 { color: #212529; font-size: 28px; margin: 0; }
+        .status-ok { color: #2b8a3e; }
+        .status-bad { color: #c92a2a; }
+        .login-box {
+            max-width: 380px;
+            margin: 60px auto;
+            padding: 30px;
+            border-radius: 16px;
+            background: #ffffff;
+            border: 1px solid #dee2e6;
+            box-shadow: 0 10px 15px rgba(0,0,0,0.05);
+        }
+        /* Forces standard text labels to adjust correctly to light mode backgrounds */
+        .stMarkdown, p, label, h1, h2, h3, h4, h5, h6 { color: #212529 !important; }
+        </style>
+        """, unsafe_allow_html=True)
+
+# Run the active theme immediately
+apply_theme()
 # ================== SESSION STATE ==================
 
 if "logged_in" not in st.session_state:
@@ -174,22 +218,27 @@ def canteen_page():
 # ================== MAIN APP ==================
 
 def main_app():
-    with st.sidebar:
-        st.markdown(f"### 👋 {st.session_state.username}")
-        page = st.radio("Navigate", ["Attendance", "Canteen Dashboard"])
-        st.divider()
-        if st.button("Logout"):
-            st.session_state.logged_in = False
-            st.session_state.username = ""
-            st.rerun()
+    def main_app():
+        with st.sidebar:
+            st.markdown(f"### 👋 {st.session_state.username}")
+            page = st.radio("Navigate", ["Attendance", "Canteen Dashboard"])
+            st.divider()
+            
+            is_dark = st.toggle("🌙 Dark Mode", value=(st.session_state.theme == "dark"))
+            if is_dark != (st.session_state.theme == "dark"):
+                st.session_state.theme = "dark" if is_dark else "light"
+                st.rerun()
+                
+            st.divider()
+            if st.button("Logout"):
+                st.session_state.logged_in = False
+                st.session_state.username = ""
+                st.rerun()
 
-    if page == "Attendance":
-        attendance_page()
-    else:
-        canteen_page()
-
-# ================== ROUTER ==================
-
+        if page == "Attendance":
+            attendance_page()
+        else:
+            canteen_page()
 if st.session_state.logged_in:
     main_app()
 else:
