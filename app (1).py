@@ -281,99 +281,101 @@ def login_page():
 # ================== ATTENDANCE PAGE ==================
 
 def attendance_page():
-    st.header("📋 Attendance Entry")
+    # 🔒 Clear Separation: Normal teachers see Entry Form, Management does not
+    if st.session_state.username not in ["admin", "Principal"]:
+        st.header("📋 Attendance Entry")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            class_name = st.text_input("Class (e.g. 10-A)")
+        with col2:
+            present = st.number_input("Present", min_value=0, step=1)
+        with col3:
+            total = st.number_input("Total students", min_value=0, step=1)
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        class_name = st.text_input("Class (e.g. 10-A)")
-    with col2:
-        present = st.number_input("Present", min_value=0, step=1)
-    with col3:
-        total = st.number_input("Total students", min_value=0, step=1)
-
-    if st.button("Submit Attendance"):
-        if class_name.strip() == "":
-            st.error("Enter a class name")
-        else:
-            new_row = pd.DataFrame([{
-                "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                "teacher": st.session_state.username,
-                "class": class_name,
-                "present": present,
-                "total": total,
-            }])
-            if os.path.exists(ATTENDANCE_FILE):
-                new_row.to_csv(ATTENDANCE_FILE, mode="a", header=False, index=False)
+        if st.button("Submit Attendance"):
+            if class_name.strip() == "":
+                st.error("Enter a class name")
             else:
-                new_row.to_csv(ATTENDANCE_FILE, index=False)
-            st.success(f"Attendance saved for {class_name}")
+                new_row = pd.DataFrame([{
+                    "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "teacher": st.session_state.username,
+                    "class": class_name,
+                    "present": present,
+                    "total": total,
+                }])
+                if os.path.exists(ATTENDANCE_FILE):
+                    new_row.to_csv(ATTENDANCE_FILE, mode="a", header=False, index=False)
+                else:
+                    new_row.to_csv(ATTENDANCE_FILE, index=False)
+                st.success(f"Attendance saved for {class_name}")
+        st.divider()
 
-    st.divider()
-
-    # --- DATA RECORDS VISUALIZATION LAYOUT ---
+    # --- READ-OUT / VIEW CONFIGURATIONS ---
     if os.path.exists(ATTENDANCE_FILE):
         df = pd.read_csv(ATTENDANCE_FILE)
         
-        # 👑 PRINCIPAL & ADMIN VIEW: Labeled individual class frames
+        # 👑 PRINCIPAL & ADMIN VIEW: Cascading Class Sheets
         if st.session_state.username in ["admin", "Principal"]:
-            st.markdown("## 👑 Complete School Overview")
+            st.title("👑 Institutional Attendance Center")
+            st.caption("Management View: Segmented logs compiled by individual class tracks.")
             
             if not df.empty:
-                # Find all unique classes registered in the file and sort them
                 unique_classes = sorted(df["class"].dropna().unique())
                 
-                # Loop through each class and generate its own separate, distinct table framework
+                # Loops over each class to stack Class -> Table -> Controls sequentially
                 for cls in unique_classes:
-                    st.markdown(f"### 🏫 Class {cls} Attendance Records")
+                    st.markdown(f"## 🏫 Class {cls} Logs")
                     class_filtered_df = df[df["class"] == cls].sort_values("date", ascending=False)
                     st.dataframe(class_filtered_df, use_container_width=True)
-            else:
-                st.info("No records found in database file.")
+                    
+                    # Section Export Protocol
+                    csv_data = class_filtered_df.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label=f"📥 Export Class {cls} Data (.CSV)",
+                        data=csv_data,
+                        file_name=f"Class_{cls}_Attendance.csv",
+                        mime="text/csv",
+                        key=f"dl_btn_{cls}" # Unique tracking key
+                    )
+                    st.markdown("<div style='margin-bottom: 40px; border-bottom: 2px dashed #333a52;'></div>", unsafe_allow_html=True)
                 
-        # 📖 STANDARD TEACHER VIEW: Only shows their personal submissions
+                # Global Action Trigger at the absolute layout bottom
+                st.markdown("""
+                    <button onclick="window.print()" class="global-print-btn">
+                        🖨️ Print Entire School Report Layout to PDF
+                    </button>
+                    <style>
+                    .global-print-btn {
+                        background: linear-gradient(90deg, #10b981, #059669) !important;
+                        color: white !important;
+                        border-radius: 12px !important;
+                        border: none !important;
+                        font-weight: 600 !important;
+                        font-size: 16px !important;
+                        padding: 14px 28px !important;
+                        width: 100% !important;
+                        cursor: pointer !important;
+                        margin-top: 20px;
+                        box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3) !important;
+                    }
+                    @media print {
+                        .global-print-btn, button, [data-testid="stHeader"] { display: none !important; }
+                    }
+                    </style>
+                """, unsafe_allow_html=True)
+            else:
+                st.info("No submission records found inside the historical system.")
+                
+        # 📖 STANDARD TEACHER VIEW
         else:
             st.markdown(f"### 📖 Your Class Submissions ({st.session_state.username})")
             teacher_filtered_df = df[df["teacher"] == st.session_state.username].sort_values("date", ascending=False)
             if not teacher_filtered_df.empty:
                 st.dataframe(teacher_filtered_df, use_container_width=True)
             else:
-                st.info("You haven't submitted any attendance records yet.")
-                
-        # --- 🖨️ NATIVE ONE-CLICK JAVASCRIPT PRINT OPTIONS BUTTON ---
-        st.markdown("""
-            <div style='margin-top: 40px;'></div>
-            <button onclick="window.print()" class="print-dashboard-btn">
-                🖨️ Open Print Window & Save Table as PDF
-            </button>
-            
-            <style>
-            .print-dashboard-btn {
-                background: linear-gradient(90deg, #10b981, #059669) !important;
-                color: white !important;
-                border-radius: 12px !important;
-                border: none !important;
-                font-weight: 600 !important;
-                font-size: 16px !important;
-                padding: 14px 28px !important;
-                width: 100% !important;
-                cursor: pointer !important;
-                transition: all 0.2s ease-in-out !important;
-                box-shadow: 0 4px 15px rgba(16, 185, 129, 0.35) !important;
-            }
-            .print-dashboard-btn:hover {
-                transform: scale(1.01) !important;
-                box-shadow: 0 6px 22px rgba(16, 185, 129, 0.55) !important;
-            }
-            /* Ensures button hidden when generating document page views */
-            @media print {
-                .print-dashboard-btn, [data-testid="stHeader"], .stDownloadButton { display: none !important; }
-            }
-            </style>
-        """, unsafe_allow_html=True)
-        
+                st.info("No records submitted under your current session profile yet.")
     else:
-        st.info("No attendance records have been initialized within the database yet.")
-
+        st.info("No historical records have been initialized within the database yet.")
 # ================== CANTEEN DASHBOARD PAGE ==================
 
 def canteen_page():
@@ -405,24 +407,43 @@ def canteen_page():
 # ================== USER MANAGEMENT PAGE ==================
 
 def users_page():
-    st.header("🗄️ Registered System Users")
-    st.caption("This administrative view lists all accounts currently stored in the SQLite database.")
+    st.header("🗄️ System Identity Management")
+    st.caption("Administrative Console: View and manage user access profiles.")
 
-    # 🔍 Connect to DB and fetch usernames
+    # 🔍 Read current users from SQL
     conn = sqlite3.connect(DB_FILE)
-    
-    # We select only the 'username' column for data privacy (hiding the passwords)
     df_users = pd.read_sql_query("SELECT username FROM users", conn)
     conn.close()
 
-    # Display total account count metric
-    st.metric(label="Total Registered Accounts", value=len(df_users))
-
-    # Render data table layout
-    st.subheader("Active User Database Rows")
+    st.metric(label="Active Accounts", value=len(df_users))
     st.dataframe(df_users, use_container_width=True)
 
+    st.divider()
+    st.subheader("❌ Remove User Access Profile")
     
+    # 🔒 Protection Engine: Exclude the currently logged-in user so they can't delete themselves
+    active_profile_list = [user for user in df_users["username"].tolist() if user != st.session_state.username]
+    
+    if active_profile_list:
+        target_user = st.selectbox("Select target account to purge:", active_profile_list)
+        
+        st.warning(f"⚠️ Action Warning: Deleting '{target_user}' will permanently remove their credentials from the system file.")
+        
+        if st.button("Confirm Deletion & Purge Account", type="primary"):
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            
+            # Execute SQL delete operation targeting the exact key variable
+            cursor.execute("DELETE FROM users WHERE username = ?", (target_user,))
+            
+            conn.commit()
+            conn.close()
+            
+            st.success(f"💥 Account '{target_user}' successfully purged from database storage!")
+            st.rerun()
+    else:
+        st.info("No auxiliary user records available to target for removal.")
+        
 # ================== MAIN APP ==================
 
 def main_app():
