@@ -283,7 +283,6 @@ def login_page():
 def attendance_page():
     st.header("📋 Attendance Entry")
 
-    # 📥 standard input entry grid
     col1, col2, col3 = st.columns(3)
     with col1:
         class_name = st.text_input("Class (e.g. 10-A)")
@@ -311,40 +310,67 @@ def attendance_page():
 
     st.divider()
 
-    # --- 🔒 SECURITY LAYER: ROLE-BASED ACCESS FILTERING ---
+    # --- DATA RECORDS VISUALIZATION LAYOUT ---
     if os.path.exists(ATTENDANCE_FILE):
         df = pd.read_csv(ATTENDANCE_FILE)
         
-        # Condition A: Higher Privilege clearance check
+        # 👑 PRINCIPAL & ADMIN VIEW: Labeled individual class frames
         if st.session_state.username in ["admin", "Principal"]:
-            st.subheader("👑 Complete School Records Overview (Management Frame)")
-            filtered_df = df.sort_values("date", ascending=False)
+            st.markdown("## 👑 Complete School Overview")
+            
+            if not df.empty:
+                # Find all unique classes registered in the file and sort them
+                unique_classes = sorted(df["class"].dropna().unique())
+                
+                # Loop through each class and generate its own separate, distinct table framework
+                for cls in unique_classes:
+                    st.markdown(f"### 🏫 Class {cls} Attendance Records")
+                    class_filtered_df = df[df["class"] == cls].sort_values("date", ascending=False)
+                    st.dataframe(class_filtered_df, use_container_width=True)
+            else:
+                st.info("No records found in database file.")
+                
+        # 📖 STANDARD TEACHER VIEW: Only shows their personal submissions
+        else:
+            st.markdown(f"### 📖 Your Class Submissions ({st.session_state.username})")
+            teacher_filtered_df = df[df["teacher"] == st.session_state.username].sort_values("date", ascending=False)
+            if not teacher_filtered_df.empty:
+                st.dataframe(teacher_filtered_df, use_container_width=True)
+            else:
+                st.info("You haven't submitted any attendance records yet.")
+                
+        # --- 🖨️ NATIVE ONE-CLICK JAVASCRIPT PRINT OPTIONS BUTTON ---
+        st.markdown("""
+            <div style='margin-top: 40px;'></div>
+            <button onclick="window.print()" class="print-dashboard-btn">
+                🖨️ Open Print Window & Save Table as PDF
+            </button>
+            
+            <style>
+            .print-dashboard-btn {
+                background: linear-gradient(90deg, #10b981, #059669) !important;
+                color: white !important;
+                border-radius: 12px !important;
+                border: none !important;
+                font-weight: 600 !important;
+                font-size: 16px !important;
+                padding: 14px 28px !important;
+                width: 100% !important;
+                cursor: pointer !important;
+                transition: all 0.2s ease-in-out !important;
+                box-shadow: 0 4px 15px rgba(16, 185, 129, 0.35) !important;
+            }
+            .print-dashboard-btn:hover {
+                transform: scale(1.01) !important;
+                box-shadow: 0 6px 22px rgba(16, 185, 129, 0.55) !important;
+            }
+            /* Ensures button hidden when generating document page views */
+            @media print {
+                .print-dashboard-btn, [data-testid="stHeader"], .stDownloadButton { display: none !important; }
+            }
+            </style>
+        """, unsafe_allow_html=True)
         
-        # Condition B: Restricted Teacher clearance block
-        else:
-            st.subheader(f"📖 Your Class Submissions ({st.session_state.username})")
-            # Filters rows matching the teacher's unique login ID
-            filtered_df = df[df["teacher"] == st.session_state.username].sort_values("date", ascending=False)
-
-        # Renders the authorized dataframe
-        if not filtered_df.empty:
-            st.dataframe(filtered_df, use_container_width=True)
-            
-            # --- 📄 EXPORT PROTOCOLS ---
-            col_dl, _ = st.columns([1, 2])
-            with col_dl:
-                csv_data = filtered_df.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="📥 Download Data Table (.CSV)",
-                    data=csv_data,
-                    file_name=f"Attendance_Report_{st.session_state.username}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-            
-            st.info("💡 **How to generate a perfect PDF:** Press **Ctrl + P** (or **Cmd + P** on Mac) to open your device's native system print view. Choose **'Save as PDF'** to instantly download a clean, structured print report of the data table displayed above.")
-        else:
-            st.info("No historical records matching your credentials found.")
     else:
         st.info("No attendance records have been initialized within the database yet.")
 
@@ -382,7 +408,15 @@ def canteen_page():
 def main_app():
     with st.sidebar:
         st.markdown(f"### 👋 {st.session_state.username}")
-        page = st.radio("Navigate", ["Attendance", "Canteen Dashboard"])
+        
+        # 🔒 ROLE-BASED ACCESS CONTROL (RBAC)
+        # Only Admin and Principal are allowed to view the Canteen Dashboard
+        if st.session_state.username in ["admin", "Principal"]:
+            page = st.radio("Navigate", ["Attendance", "Canteen Dashboard"])
+        else:
+            page = "Attendance"
+            st.info("🔒 Canteen Dashboard is restricted to Management.")
+            
         st.divider()
         
         is_dark = st.toggle("🌙 Dark Mode", value=(st.session_state.theme == "dark"))
