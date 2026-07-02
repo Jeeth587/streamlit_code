@@ -304,7 +304,10 @@ def print_dataframe_button(df, class_name="Report"):
     """, unsafe_allow_html=True)
 # ================== ATTENDANCE PAGE ==================
 
+# ================== ATTENDANCE PAGE ==================
+
 def attendance_page():
+    # 1. TEACHER ENTRY FORM (Hidden from Admin/Principal)
     if st.session_state.username not in ["Admin", "Principal"]:
         st.header("📋 Attendance Entry")
         col1, col2, col3 = st.columns(3)
@@ -326,11 +329,13 @@ def attendance_page():
                 st.success(f"Attendance saved for {class_name}")
         st.divider()
 
-    if os.path.exists(ATTENDANCE_FILE):
-        df = pd.read_csv(ATTENDANCE_FILE)
+    # 2. PRINCIPAL / ADMIN VIEW
+    if st.session_state.username in ["Admin", "Principal"]:
+        st.title("👑 Institutional Attendance Center")
         
-        if st.session_state.username in ["Admin", "Principal"]:
-            st.title("👑 Institutional Attendance Center")
+        # Check if the CSV exists before trying to read it
+        if os.path.exists(ATTENDANCE_FILE):
+            df = pd.read_csv(ATTENDANCE_FILE)
             if not df.empty:
                 unique_classes = sorted(df["class"].dropna().unique())
                 for cls in unique_classes:
@@ -341,44 +346,28 @@ def attendance_page():
                     csv_data = class_filtered_df.to_csv(index=False).encode('utf-8')
                     st.download_button(label=f"📥 Export Class {cls}", data=csv_data, file_name=f"Class_{cls}.csv", mime="text/csv", key=f"dl_{cls}")
                     
-                    # 👇 CALLING THE PRINT FUNCTION HERE
+                    # Call print function
                     print_dataframe_button(class_filtered_df, cls)
                     
                     st.markdown("<div style='margin-bottom: 40px; border-bottom: 2px dashed #333a52;'></div>", unsafe_allow_html=True)
-            else: st.info("No records found.")
+            else: 
+                st.info("No records found in the system.")
         else:
-            st.markdown(f"### 📖 Your Class Submissions ({st.session_state.username})")
+            # 🐛 This handles the scenario where the file hasn't been created yet!
+            st.info("No attendance records have been submitted yet. The dashboard is waiting for teachers to enter data.")
+            
+    # 3. NORMAL TEACHER VIEW
+    else:
+        st.markdown(f"### 📖 Your Class Submissions ({st.session_state.username})")
+        if os.path.exists(ATTENDANCE_FILE):
+            df = pd.read_csv(ATTENDANCE_FILE)
             teacher_df = df[df["teacher"] == st.session_state.username].sort_values("date", ascending=False)
-            if not teacher_df.empty: st.dataframe(teacher_df, use_container_width=True)
-            else: st.info("No records submitted yet.")
-# ================== CANTEEN DASHBOARD PAGE ==================
-
-def canteen_page():
-    st.header("🍽️ Canteen Live Status")
-    data = get_mqtt_data()
-
-    cols = st.columns(3)
-    labels = {
-        "gas-status": ("⚠️ Gas Status", cols[0]),
-        "waste-bin": ("🗑️ Waste Bin (%)", cols[1]),
-        "kitchen-health": ("💚 Kitchen Health", cols[2]),
-        "fan-status": ("🌀 Fan Status", cols[0]),
-        "valve-status": ("🔧 Valve Status", cols[1]),
-        "event-log": ("📝 Last Event", cols[2]),
-    }
-
-    for feed, (label, col) in labels.items():
-        with col:
-            st.markdown(f"""
-            <div class="metric-card">
-                <h3>{label}</h3>
-                <h1>{data.get(feed, "—")}</h1>
-            </div>
-            """, unsafe_allow_html=True)
-
-    st.caption("Live data pushed via MQTT from Adafruit IO — updates automatically when the ESP publishes.")
-    if st.button("🔄 Refresh"):
-        st.rerun()
+            if not teacher_df.empty: 
+                st.dataframe(teacher_df, use_container_width=True)
+            else: 
+                st.info("No records submitted yet.")
+        else:
+            st.info("You have not submitted any records yet.")
 # ================== USER MANAGEMENT PAGE ==================
 
 def users_page():
