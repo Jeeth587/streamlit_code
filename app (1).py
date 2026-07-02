@@ -6,6 +6,7 @@ SMART SCHOOL DASHBOARD
 """
 
 import streamlit as st
+import base64
 import paho.mqtt.client as mqtt
 import streamlit.components.v1 as components
 import pandas as pd
@@ -270,24 +271,49 @@ def login_page():
                     st.success(f"Account '{new_uid}' saved to Database! Slide back to login tab.")
                 
     st.markdown("</div>", unsafe_allow_html=True)
-
+# Dataframe:
+def print_dataframe_button(df, class_name="Report"):
+    html_table = df.to_html(index=False)
+    html_content = f"""
+    <html>
+    <head>
+        <style>
+            body {{ font-family: 'Inter', sans-serif; padding: 20px; }}
+            h2 {{ color: #111827; }}
+            table {{ border-collapse: collapse; width: 100%; margin-top: 20px; }}
+            th, td {{ border: 1px solid #d1d5db; padding: 12px; text-align: left; }}
+            th {{ background-color: #f3f4f6; font-weight: 600; }}
+            @media print {{ button, a {{ display: none !important; }} }}
+        </style>
+    </head>
+    <body onload="window.print()">
+        <h2>🏫 Class {class_name} Attendance Report</h2>
+        {html_table}
+    </body>
+    </html>
+    """
+    b64 = base64.b64encode(html_content.encode('utf-8')).decode('utf-8')
+    st.markdown(f"""
+        <a href="data:text/html;base64,{b64}" target="_blank" style="
+            display: block; text-align: center; background: linear-gradient(90deg, #10b981, #059669);
+            color: white; border-radius: 12px; text-decoration: none;
+            font-weight: 600; font-size: 16px; padding: 14px 28px; 
+            margin-top: 10px; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);">
+            🖨️ Print Data Table
+        </a>
+    """, unsafe_allow_html=True)
 # ================== ATTENDANCE PAGE ==================
 
 def attendance_page():
-    # 🔒 Clear Separation: Normal teachers see Entry Form, Management does not
-    if st.session_state.username not in ["admin", "Principal"]:
+    if st.session_state.username not in ["Admin", "Principal"]:
         st.header("📋 Attendance Entry")
         col1, col2, col3 = st.columns(3)
-        with col1:
-            class_name = st.text_input("Class (e.g. 10-A)")
-        with col2:
-            present = st.number_input("Present", min_value=0, step=1)
-        with col3:
-            total = st.number_input("Total students", min_value=0, step=1)
+        with col1: class_name = st.text_input("Class (e.g. 10-A)")
+        with col2: present = st.number_input("Present", min_value=0, step=1)
+        with col3: total = st.number_input("Total students", min_value=0, step=1)
 
         if st.button("Submit Attendance"):
-            if class_name.strip() == "":
-                st.error("Enter a class name")
+            if class_name.strip() == "": st.error("Enter a class name")
             else:
                 new_row = pd.DataFrame([{
                     "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -296,80 +322,35 @@ def attendance_page():
                     "present": present,
                     "total": total,
                 }])
-                if os.path.exists(ATTENDANCE_FILE):
-                    new_row.to_csv(ATTENDANCE_FILE, mode="a", header=False, index=False)
-                else:
-                    new_row.to_csv(ATTENDANCE_FILE, index=False)
+                new_row.to_csv(ATTENDANCE_FILE, mode="a", header=not os.path.exists(ATTENDANCE_FILE), index=False)
                 st.success(f"Attendance saved for {class_name}")
         st.divider()
 
-    # --- READ-OUT / VIEW CONFIGURATIONS ---
     if os.path.exists(ATTENDANCE_FILE):
         df = pd.read_csv(ATTENDANCE_FILE)
         
-        # 👑 PRINCIPAL & ADMIN VIEW: Cascading Class Sheets
-         # 👑 PRINCIPAL & ADMIN VIEW: Cascading Class Sheets
-        if st.session_state.username in ["admin", "Principal"]:
+        if st.session_state.username in ["Admin", "Principal"]:
             st.title("👑 Institutional Attendance Center")
-            st.caption("Management View: Segmented logs compiled by individual class tracks.")
-            
             if not df.empty:
                 unique_classes = sorted(df["class"].dropna().unique())
-                
-                # Loops over each class to stack Class -> Table -> Controls sequentially
                 for cls in unique_classes:
                     st.markdown(f"## 🏫 Class {cls} Logs")
                     class_filtered_df = df[df["class"] == cls].sort_values("date", ascending=False)
                     st.dataframe(class_filtered_df, use_container_width=True)
                     
-                    # Section Export Protocol
                     csv_data = class_filtered_df.to_csv(index=False).encode('utf-8')
-                    st.download_button(
-                        label=f"📥 Export Class {cls} Data (.CSV)",
-                        data=csv_data,
-                        file_name=f"Class_{cls}_Attendance.csv",
-                        mime="text/csv",
-                        key=f"dl_btn_{cls}" # Unique tracking key
-                    )
+                    st.download_button(label=f"📥 Export Class {cls}", data=csv_data, file_name=f"Class_{cls}.csv", mime="text/csv", key=f"dl_{cls}")
+                    
+                    # 👇 CALLING THE PRINT FUNCTION HERE
+                    print_dataframe_button(class_filtered_df, cls)
+                    
                     st.markdown("<div style='margin-bottom: 40px; border-bottom: 2px dashed #333a52;'></div>", unsafe_allow_html=True)
-                
-                # Global Action Trigger at the absolute layout bottom
-                # Global Action Trigger at the absolute layout bottom
-                components.html("""
-                    <button onclick="window.print()" style="
-                        background: linear-gradient(90deg, #10b981, #059669);
-                        color: white; 
-                        border-radius: 12px; 
-                        border: none;
-                        font-family: sans-serif;
-                        font-weight: 600; 
-                        font-size: 16px;
-                        padding: 14px 28px; 
-                        width: 100%; 
-                        cursor: pointer;
-                        margin-top: 5px;
-                        box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);">
-                        🖨️ Print Entire School Report Layout to PDF
-                    </button>
-                    <style>
-                    @media print {
-                        button { display: none !important; }
-                    }
-                    </style>
-                """, height=70)
-            else:
-                st.info("No submission records found inside the historical system.")
-                
-        # 📖 STANDARD TEACHER VIEW
+            else: st.info("No records found.")
         else:
             st.markdown(f"### 📖 Your Class Submissions ({st.session_state.username})")
-            teacher_filtered_df = df[df["teacher"] == st.session_state.username].sort_values("date", ascending=False)
-            if not teacher_filtered_df.empty:
-                st.dataframe(teacher_filtered_df, use_container_width=True)
-            else:
-                st.info("No records submitted under your current session profile yet.")
-    else:
-        st.info("No historical records have been initialized within the database yet.")
+            teacher_df = df[df["teacher"] == st.session_state.username].sort_values("date", ascending=False)
+            if not teacher_df.empty: st.dataframe(teacher_df, use_container_width=True)
+            else: st.info("No records submitted yet.")
 # ================== CANTEEN DASHBOARD PAGE ==================
 
 def canteen_page():
