@@ -273,36 +273,57 @@ def login_page():
     st.markdown("</div>", unsafe_allow_html=True)
 # Dataframe:
 def print_dataframe_button(df, class_name="Report"):
-    html_table = df.to_html(index=False)
-    html_content = f"""
-    <html>
-    <head>
-        <style>
-            body {{ font-family: 'Inter', sans-serif; padding: 20px; }}
-            h2 {{ color: #111827; }}
-            table {{ border-collapse: collapse; width: 100%; margin-top: 20px; }}
-            th, td {{ border: 1px solid #d1d5db; padding: 12px; text-align: left; }}
-            th {{ background-color: #f3f4f6; font-weight: 600; }}
-            @media print {{ button, a {{ display: none !important; }} }}
-        </style>
-    </head>
-    <body onload="window.print()">
-        <h2>🏫 Class {class_name} Attendance Report</h2>
-        {html_table}
-    </body>
-    </html>
-    """
-    b64 = base64.b64encode(html_content.encode('utf-8')).decode('utf-8')
-    st.markdown(f"""
-        <a href="data:text/html;base64,{b64}" target="_blank" style="
-            display: block; text-align: center; background: linear-gradient(90deg, #10b981, #059669);
-            color: white; border-radius: 12px; text-decoration: none;
+    # Convert dataframe to HTML and strip newlines so it plays nicely with JavaScript
+    html_table = df.to_html(index=False).replace('\n', '')
+    
+    # Use components.html to inject a JavaScript print handler
+    components.html(f"""
+        <button onclick="printTable()" style="
+            background: linear-gradient(90deg, #10b981, #059669);
+            color: white; border-radius: 12px; border: none;
+            font-family: 'Inter', sans-serif;
             font-weight: 600; font-size: 16px; padding: 14px 28px; 
-            margin-top: 10px; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);">
-            🖨️ Print Data Table
-        </a>
-    """, unsafe_allow_html=True)
-# ================== ATTENDANCE PAGE ==================
+            width: 100%; cursor: pointer; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);">
+            🖨️ Print Class {class_name} Data Table
+        </button>
+
+        <script>
+        function printTable() {{
+            // Open a blank popup window
+            const printWindow = window.open('', '_blank', 'width=800,height=600');
+            
+            // Write the HTML and CSS directly into the new window
+            printWindow.document.write(`
+                <html>
+                <head>
+                    <title>Print - Class {class_name}</title>
+                    <style>
+                        body {{ font-family: 'Inter', sans-serif; padding: 20px; color: #111827; }}
+                        h2 {{ margin-bottom: 20px; }}
+                        table {{ border-collapse: collapse; width: 100%; }}
+                        th, td {{ border: 1px solid #d1d5db; padding: 12px; text-align: left; }}
+                        th {{ background-color: #f3f4f6; font-weight: 600; }}
+                    </style>
+                </head>
+                <body>
+                    <h2>🏫 Class {class_name} Attendance Report</h2>
+                    {html_table}
+                    <script>
+                        // Wait for the window to load, print, then close it
+                        window.onload = function() {{ 
+                            window.print(); 
+                            // Close window after print dialog is dismissed (works in most browsers)
+                            window.onafterprint = function() {{ window.close(); }};
+                        }};
+                    </script>
+                </body>
+                </html>
+            `);
+            // Close the document stream to finalize rendering
+            printWindow.document.close();
+        }}
+        </script>
+    """, height=70)
 
 # ================== ATTENDANCE PAGE ==================
 
