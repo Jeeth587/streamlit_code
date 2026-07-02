@@ -389,6 +389,58 @@ def attendance_page():
                 st.info("No records submitted yet.")
         else:
             st.info("You have not submitted any records yet.")
+
+            
+# ================== CANTEEN PAGE ==================
+
+def canteen_page():
+    st.header("🍽️ Canteen Live Status")
+    st.markdown("Monitoring live metrics from Adafruit IO MQTT feeds.")
+    
+    # Fetch the live data dictionary from your cached MQTT connection
+    data = get_mqtt_data()
+    
+    st.markdown("<div style='padding-top:20px;'></div>", unsafe_allow_html=True)
+    
+    # Display the feeds in a clean 3-column grid
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
+        st.metric("💨 Gas Status", data.get("gas-status", "—"))
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+        st.markdown("<div style='padding-top:20px;'></div>", unsafe_allow_html=True)
+        
+        st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
+        st.metric("🔄 Fan Status", data.get("fan-status", "—"))
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with col2:
+        st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
+        st.metric("🗑️ Waste Bin", data.get("waste-bin", "—"))
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+        st.markdown("<div style='padding-top:20px;'></div>", unsafe_allow_html=True)
+        
+        st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
+        st.metric("🚰 Valve Status", data.get("valve-status", "—"))
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with col3:
+        st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
+        st.metric("❤️ Kitchen Health", data.get("kitchen-health", "—"))
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+        st.markdown("<div style='padding-top:20px;'></div>", unsafe_allow_html=True)
+        
+        st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
+        st.metric("📋 Event Log", data.get("event-log", "—"))
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+    st.divider()
+    if st.button("🔄 Force Refresh Sensor Data"):
+        st.rerun()
 # ================== USER MANAGEMENT PAGE ==================
 
 def users_page():
