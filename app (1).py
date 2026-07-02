@@ -7,6 +7,7 @@ SMART SCHOOL DASHBOARD
 
 import streamlit as st
 import paho.mqtt.client as mqtt
+import streamlit.components.v1 as components
 import pandas as pd
 import os
 import sqlite3  # 🗄️ Python's native SQL database engine
@@ -307,6 +308,7 @@ def attendance_page():
         df = pd.read_csv(ATTENDANCE_FILE)
         
         # 👑 PRINCIPAL & ADMIN VIEW: Cascading Class Sheets
+         # 👑 PRINCIPAL & ADMIN VIEW: Cascading Class Sheets
         if st.session_state.username in ["admin", "Principal"]:
             st.title("👑 Institutional Attendance Center")
             st.caption("Management View: Segmented logs compiled by individual class tracks.")
@@ -332,29 +334,29 @@ def attendance_page():
                     st.markdown("<div style='margin-bottom: 40px; border-bottom: 2px dashed #333a52;'></div>", unsafe_allow_html=True)
                 
                 # Global Action Trigger at the absolute layout bottom
-                st.markdown("""
-                    <button onclick="window.print()" class="global-print-btn">
+                # Global Action Trigger at the absolute layout bottom
+                components.html("""
+                    <button onclick="window.print()" style="
+                        background: linear-gradient(90deg, #10b981, #059669);
+                        color: white; 
+                        border-radius: 12px; 
+                        border: none;
+                        font-family: sans-serif;
+                        font-weight: 600; 
+                        font-size: 16px;
+                        padding: 14px 28px; 
+                        width: 100%; 
+                        cursor: pointer;
+                        margin-top: 5px;
+                        box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);">
                         🖨️ Print Entire School Report Layout to PDF
                     </button>
                     <style>
-                    .global-print-btn {
-                        background: linear-gradient(90deg, #10b981, #059669) !important;
-                        color: white !important;
-                        border-radius: 12px !important;
-                        border: none !important;
-                        font-weight: 600 !important;
-                        font-size: 16px !important;
-                        padding: 14px 28px !important;
-                        width: 100% !important;
-                        cursor: pointer !important;
-                        margin-top: 20px;
-                        box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3) !important;
-                    }
                     @media print {
-                        .global-print-btn, button, [data-testid="stHeader"] { display: none !important; }
+                        button { display: none !important; }
                     }
                     </style>
-                """, unsafe_allow_html=True)
+                """, height=70)
             else:
                 st.info("No submission records found inside the historical system.")
                 
