@@ -1,7 +1,7 @@
 """
 SMART SCHOOL DASHBOARD
-- Login system with SQLite Database persistent tracking
-- Teachers enter attendance (saved to CSV)
+- Login system with persistent Turso (SQLite-compatible) database
+- Teachers enter attendance (saved to the same Turso database)
 - Live ESP canteen data (Adafruit IO via MQTT)
 """
 
@@ -10,8 +10,8 @@ import base64
 import paho.mqtt.client as mqtt
 import streamlit.components.v1 as components
 import pandas as pd
-import os
-import sqlite3  # 🗄️ Python's native SQL database engine
+import re
+import libsql_client  # 🗄️ Turso: pure-Python client, no compiling required
 from datetime import datetime
 
 # ================== CONFIG ==================
@@ -19,16 +19,62 @@ from datetime import datetime
 AIO_USERNAME = st.secrets["AIO_USERNAME"]
 AIO_KEY = st.secrets["AIO_KEY"]
 
+# Turso connection details (set these in .streamlit/secrets.toml locally
+# and in the "Secrets" panel on Streamlit Community Cloud)
+TURSO_DATABASE_URL = st.secrets["TURSO_DATABASE_URL"]
+TURSO_AUTH_TOKEN = st.secrets["TURSO_AUTH_TOKEN"]
+
 FEEDS = ["gas-status", "waste-bin", "kitchen-health", "fan-status", "valve-status", "event-log"]
-ATTENDANCE_FILE = "attendance.csv"
-DB_FILE = "School.db"  # The name of your local SQL database file
 
 st.set_page_config(page_title="School Dashboard", page_icon="🏫", layout="wide")
 
-# ================== SQL DATABASE INITIALIZATION ==================
+# ================== SQL DATABASE (Turso, persistent) ==================
+# libsql_client talks HTTP, not sqlite3's cursor API - this thin shim makes
+# it look like sqlite3 so every conn.cursor()/execute()/fetchone()/commit()
+# call elsewhere in the file works unchanged.
+
+class _CursorShim:
+    def __init__(self, client):
+        self._client = client
+        self._rows = []
+
+    def execute(self, sql, params=None):
+        result = self._client.execute(sql, list(params) if params else [])
+        self._rows = list(result.rows)
+        return self
+
+    def executemany(self, sql, seq_of_params):
+        for params in seq_of_params:
+            self._client.execute(sql, list(params))
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return self._rows
+
+
+class _ConnectionShim:
+    def __init__(self, url, auth_token):
+        self._client = libsql_client.create_client_sync(url=url, auth_token=auth_token)
+
+    def cursor(self):
+        return _CursorShim(self._client)
+
+    def commit(self):
+        pass  # each execute() over HTTP is already committed
+
+    def close(self):
+        self._client.close()
+
+
+def get_db_connection():
+    """Every call opens a connection to the real remote Turso database.
+    Nothing here lives in local/session cache - it's a normal SQL DB."""
+    return _ConnectionShim(TURSO_DATABASE_URL, TURSO_AUTH_TOKEN)
 
 def init_db():
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -37,6 +83,18 @@ def init_db():
             password TEXT NOT NULL
         )
     """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS attendance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            teacher TEXT NOT NULL,
+            class TEXT NOT NULL,
+            present INTEGER NOT NULL,
+            total INTEGER NOT NULL
+        )
+    """)
+    conn.commit()
     
     # Only seed if the table is completely empty
     cursor.execute("SELECT COUNT(*) FROM users")
@@ -230,7 +288,7 @@ def login_page():
         
         if st.button("Sign In", use_container_width=True, key="login_btn"):
             # 🔍 SQL QUERY: Fetch password matching username
-            conn = sqlite3.connect(DB_FILE)
+            conn = get_db_connection()
             cursor = conn.cursor()
             cursor.execute("SELECT password FROM users WHERE username = ?", (uid,))
             record = cursor.fetchone()
@@ -255,7 +313,7 @@ def login_page():
             elif new_pwd != confirm_pwd:
                 st.error("Passwords do not match")
             else:
-                conn = sqlite3.connect(DB_FILE)
+                conn = get_db_connection()
                 cursor = conn.cursor()
                 
                 # 🔍 SQL QUERY: Check if username already exists
@@ -275,10 +333,22 @@ def login_page():
 def print_dataframe_button(df, class_name="Report"):
     # Convert dataframe to HTML and strip newlines so it plays nicely with JavaScript
     html_table = df.to_html(index=False).replace('\n', '')
-    
-    # Use components.html to inject a JavaScript print handler
+
+    # A safe identifier for use in HTML ids / JS function names (class names
+    # like "10-A" contain characters that aren't valid there otherwise)
+    safe_id = re.sub(r'[^a-zA-Z0-9_]', '_', str(class_name))
+
+    # Renders the table into a hidden area inside THIS component and prints
+    # that area directly - no popup window involved, so nothing can be
+    # blocked by a popup blocker and there's no nested <script> tag that
+    # could get cut off early by the HTML parser.
     components.html(f"""
-        <button onclick="printTable()" style="
+        <div id="print-area-{safe_id}" style="display:none;">
+            <h2>🏫 Class {class_name} Attendance Report</h2>
+            {html_table}
+        </div>
+
+        <button onclick="printClass_{safe_id}()" style="
             background: linear-gradient(90deg, #10b981, #059669);
             color: white; border-radius: 12px; border: none;
             font-family: 'Inter', sans-serif;
@@ -287,45 +357,34 @@ def print_dataframe_button(df, class_name="Report"):
             🖨️ Print Class {class_name} Data Table
         </button>
 
+        <style>
+            @media print {{
+                body > *:not(#print-area-{safe_id}) {{ display: none !important; }}
+                #print-area-{safe_id} {{ display: block !important; }}
+                table {{ border-collapse: collapse; width: 100%; }}
+                th, td {{ border: 1px solid #d1d5db; padding: 8px 12px; text-align: left; }}
+                th {{ background-color: #f3f4f6; font-weight: 600; }}
+            }}
+        </style>
+
         <script>
-        function printTable() {{
-            // Open a blank popup window
-            const printWindow = window.open('', '_blank', 'width=800,height=600');
-            
-            // Write the HTML and CSS directly into the new window
-            printWindow.document.write(`
-                <html>
-                <head>
-                    <title>Print - Class {class_name}</title>
-                    <style>
-                        body {{ font-family: 'Inter', sans-serif; padding: 20px; color: #111827; }}
-                        h2 {{ margin-bottom: 20px; }}
-                        table {{ border-collapse: collapse; width: 100%; }}
-                        th, td {{ border: 1px solid #d1d5db; padding: 12px; text-align: left; }}
-                        th {{ background-color: #f3f4f6; font-weight: 600; }}
-                    </style>
-                </head>
-                <body>
-                    <h2>🏫 Class {class_name} Attendance Report</h2>
-                    {html_table}
-                    <script>
-                        // Wait for the window to load, print, then close it
-                        window.onload = function() {{ 
-                            window.print(); 
-                            // Close window after print dialog is dismissed (works in most browsers)
-                            window.onafterprint = function() {{ window.close(); }};
-                        }};
-                    </script>
-                </body>
-                </html>
-            `);
-            // Close the document stream to finalize rendering
-            printWindow.document.close();
+        function printClass_{safe_id}() {{
+            document.getElementById("print-area-{safe_id}").style.display = "block";
+            window.print();
+            document.getElementById("print-area-{safe_id}").style.display = "none";
         }}
         </script>
     """, height=70)
 
 # ================== ATTENDANCE PAGE ==================
+
+def get_all_attendance():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT date, teacher, class, present, total FROM attendance")
+    rows = cursor.fetchall()
+    conn.close()
+    return pd.DataFrame(rows, columns=["date", "teacher", "class", "present", "total"])
 
 def attendance_page():
     # 1. TEACHER ENTRY FORM (Hidden from Admin/Principal)
@@ -339,56 +398,48 @@ def attendance_page():
         if st.button("Submit Attendance"):
             if class_name.strip() == "": st.error("Enter a class name")
             else:
-                new_row = pd.DataFrame([{
-                    "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "teacher": st.session_state.username,
-                    "class": class_name,
-                    "present": present,
-                    "total": total,
-                }])
-                new_row.to_csv(ATTENDANCE_FILE, mode="a", header=not os.path.exists(ATTENDANCE_FILE), index=False)
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT INTO attendance (date, teacher, class, present, total) VALUES (?, ?, ?, ?, ?)",
+                    (datetime.now().strftime("%Y-%m-%d %H:%M"), st.session_state.username, class_name, present, total)
+                )
+                conn.commit()
+                conn.close()
                 st.success(f"Attendance saved for {class_name}")
         st.divider()
 
     # 2. PRINCIPAL / ADMIN VIEW
     if st.session_state.username in ["Admin", "Principal"]:
         st.title("👑 Institutional Attendance Center")
-        
-        # Check if the CSV exists before trying to read it
-        if os.path.exists(ATTENDANCE_FILE):
-            df = pd.read_csv(ATTENDANCE_FILE)
-            if not df.empty:
-                unique_classes = sorted(df["class"].dropna().unique())
-                for cls in unique_classes:
-                    st.markdown(f"## 🏫 Class {cls} Logs")
-                    class_filtered_df = df[df["class"] == cls].sort_values("date", ascending=False)
-                    st.dataframe(class_filtered_df, use_container_width=True)
-                    
-                    csv_data = class_filtered_df.to_csv(index=False).encode('utf-8')
-                    st.download_button(label=f"📥 Export Class {cls}", data=csv_data, file_name=f"Class_{cls}.csv", mime="text/csv", key=f"dl_{cls}")
-                    
-                    # Call print function
-                    print_dataframe_button(class_filtered_df, cls)
-                    
-                    st.markdown("<div style='margin-bottom: 40px; border-bottom: 2px dashed #333a52;'></div>", unsafe_allow_html=True)
-            else: 
-                st.info("No records found in the system.")
+
+        df = get_all_attendance()
+        if not df.empty:
+            unique_classes = sorted(df["class"].dropna().unique())
+            for cls in unique_classes:
+                st.markdown(f"## 🏫 Class {cls} Logs")
+                class_filtered_df = df[df["class"] == cls].sort_values("date", ascending=False)
+                st.dataframe(class_filtered_df, use_container_width=True)
+                
+                csv_data = class_filtered_df.to_csv(index=False).encode('utf-8')
+                st.download_button(label=f"📥 Export Class {cls}", data=csv_data, file_name=f"Class_{cls}.csv", mime="text/csv", key=f"dl_{cls}")
+                
+                # Call print function
+                print_dataframe_button(class_filtered_df, cls)
+                
+                st.markdown("<div style='margin-bottom: 40px; border-bottom: 2px dashed #333a52;'></div>", unsafe_allow_html=True)
         else:
-            # 🐛 This handles the scenario where the file hasn't been created yet!
             st.info("No attendance records have been submitted yet. The dashboard is waiting for teachers to enter data.")
             
     # 3. NORMAL TEACHER VIEW
     else:
         st.markdown(f"### 📖 Your Class Submissions ({st.session_state.username})")
-        if os.path.exists(ATTENDANCE_FILE):
-            df = pd.read_csv(ATTENDANCE_FILE)
-            teacher_df = df[df["teacher"] == st.session_state.username].sort_values("date", ascending=False)
-            if not teacher_df.empty: 
-                st.dataframe(teacher_df, use_container_width=True)
-            else: 
-                st.info("No records submitted yet.")
-        else:
-            st.info("You have not submitted any records yet.")
+        df = get_all_attendance()
+        teacher_df = df[df["teacher"] == st.session_state.username].sort_values("date", ascending=False) if not df.empty else df
+        if not teacher_df.empty: 
+            st.dataframe(teacher_df, use_container_width=True)
+        else: 
+            st.info("No records submitted yet.")
 
             
 # ================== CANTEEN PAGE ==================
@@ -446,8 +497,10 @@ def canteen_page():
 def users_page():
     st.header("🗄️ System Identity Management")
     
-    conn = sqlite3.connect(DB_FILE)
-    df_users = pd.read_sql_query("SELECT username FROM users", conn)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT username FROM users")
+    df_users = pd.DataFrame(cursor.fetchall(), columns=["username"])
     conn.close()
 
     st.dataframe(df_users, use_container_width=True)
@@ -468,7 +521,7 @@ def users_page():
     if active_profile_list:
         target_user = st.selectbox("Select target account to purge:", active_profile_list)
         if st.button("Confirm Deletion", type="primary"):
-            conn = sqlite3.connect(DB_FILE)
+            conn = get_db_connection()
             cursor = conn.cursor()
             cursor.execute("DELETE FROM users WHERE username = ?", (target_user,))
             conn.commit()
