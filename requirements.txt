@@ -2,3 +2,4 @@ streamlit
 paho-mqtt
 pandas
 libsql-client
+twilio
