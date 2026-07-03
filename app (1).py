@@ -3,6 +3,8 @@ SMART SCHOOL DASHBOARD
 - Login system with persistent Turso (SQLite-compatible) database
 - Teachers enter attendance (saved to the same Turso database)
 - Live ESP canteen data (Adafruit IO via MQTT)
+- Admin/Principal Attendance Deletion
+- Twilio WhatsApp Gas Leak Alerts
 """
 
 import streamlit as st
@@ -11,7 +13,7 @@ import paho.mqtt.client as mqtt
 import streamlit.components.v1 as components
 import pandas as pd
 import re
-import libsql_client  # 🗄️ Turso: pure-Python client, no compiling required
+import libsql_client
 from datetime import datetime
 
 # ================== CONFIG ==================
@@ -19,8 +21,6 @@ from datetime import datetime
 AIO_USERNAME = st.secrets["AIO_USERNAME"]
 AIO_KEY = st.secrets["AIO_KEY"]
 
-# Turso connection details (set these in .streamlit/secrets.toml locally
-# and in the "Secrets" panel on Streamlit Community Cloud)
 TURSO_DATABASE_URL = st.secrets["TURSO_DATABASE_URL"]
 TURSO_AUTH_TOKEN = st.secrets["TURSO_AUTH_TOKEN"]
 
@@ -28,10 +28,7 @@ FEEDS = ["gas-status", "waste-bin", "kitchen-health", "fan-status", "valve-statu
 
 st.set_page_config(page_title="School Dashboard", page_icon="🏫", layout="wide")
 
-# ================== SQL DATABASE (Turso, persistent) ==================
-# libsql_client talks HTTP, not sqlite3's cursor API - this thin shim makes
-# it look like sqlite3 so every conn.cursor()/execute()/fetchone()/commit()
-# call elsewhere in the file works unchanged.
+# ================== SQL DATABASE (Turso) ==================
 
 class _CursorShim:
     def __init__(self, client):
@@ -53,7 +50,6 @@ class _CursorShim:
     def fetchall(self):
         return self._rows
 
-
 class _ConnectionShim:
     def __init__(self, url, auth_token):
         self._client = libsql_client.create_client_sync(url=url, auth_token=auth_token)
@@ -62,15 +58,12 @@ class _ConnectionShim:
         return _CursorShim(self._client)
 
     def commit(self):
-        pass  # each execute() over HTTP is already committed
+        pass
 
     def close(self):
         self._client.close()
 
-
 def get_db_connection():
-    """Every call opens a connection to the real remote Turso database.
-    Nothing here lives in local/session cache - it's a normal SQL DB."""
     return _ConnectionShim(TURSO_DATABASE_URL, TURSO_AUTH_TOKEN)
 
 def init_db():
@@ -96,10 +89,8 @@ def init_db():
     """)
     conn.commit()
     
-    # Only seed if the table is completely empty
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
-        # 👑 ONLY Admin and Principal are defined here
         default_users = [
             ("Admin", "admin123"),
             ("Principal", "principal123456789##")
@@ -107,7 +98,9 @@ def init_db():
         cursor.executemany("INSERT INTO users (username, password) VALUES (?, ?)", default_users)
         conn.commit()
     conn.close()
+
 init_db()
+
 # ================== DYNAMIC THEME ENGINE ==================
 
 if "theme" not in st.session_state:
@@ -135,47 +128,12 @@ def apply_theme():
             border-color: #3ddc97;
             box-shadow: 0 8px 25px rgba(61, 220, 151, 0.15);
         }
-        .metric-card h3 { color: #8e9bb0; font-size: 14px; font-weight: 500; letter-spacing: 0.5px; margin-bottom: 8px; }
+        .metric-card h3 { color: #8e9bb0; font-size: 14px; font-weight: 500; margin-bottom: 8px; }
         .metric-card h1 { color: #ffffff; font-size: 32px; font-weight: 700; margin: 0; }
-        div.stButton > button {
-            background: linear-gradient(90deg, #4f46e5, #3b82f6) !important;
-            color: white !important;
-            border-radius: 10px !important;
-            border: none !important;
-            font-weight: 600 !important;
-            padding: 10px 24px !important;
-            transition: all 0.2s ease-in-out !important;
-            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3) !important;
-        }
-        div.stButton > button:hover { transform: scale(1.02) !important; box-shadow: 0 6px 20px rgba(59, 130, 246, 0.5) !important; }
-        div[data-testid="stTextInput"] input, div[data-testid="stNumberInput"] input {
-            background-color: #161925 !important;
-            color: #ffffff !important;
-            border: 1px solid #282f4a !important;
-            border-radius: 10px !important;
-        }
-        div[data-testid="stTextInput"] input:focus, div[data-testid="stNumberInput"] input:focus {
-            border-color: #3b82f6 !important;
-            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2) !important;
-        }
-        .login-box {
-            max-width: 400px;
-            margin: 80px auto;
-            padding: 40px;
-            border-radius: 20px;
-            background: #12141c;
-            border: 1px solid #282f4a;
-            box-shadow: 0 15px 35px rgba(0,0,0,0.5);
-        }
-        button[data-baseweb="tab"] { font-size: 14px !important; font-weight: 600 !important; padding: 10px 16px !important; }
-        div[data-testid="stNotification"] { border-radius: 10px !important; margin-top: 15px; }
-
-        /* 🖨️ PDF PRINT LAYOUT MODIFICATION (DARK MODE) */
-        @media print {
-            div[data-testid="stSidebar"] { display: none !important; }
-            div[data-testid="stMainBlockContainer"] { padding: 0 !important; width: 100% !important; }
-            button, .stDownloadButton { display: none !important; }
-        }
+        div.stButton > button { background: linear-gradient(90deg, #4f46e5, #3b82f6) !important; color: white !important; border-radius: 10px !important; border: none !important; font-weight: 600 !important; }
+        div[data-testid="stTextInput"] input, div[data-testid="stNumberInput"] input { background-color: #161925 !important; color: #ffffff !important; border: 1px solid #282f4a !important; border-radius: 10px !important; }
+        .login-box { max-width: 400px; margin: 80px auto; padding: 40px; border-radius: 20px; background: #12141c; border: 1px solid #282f4a; }
+        @media print { div[data-testid="stSidebar"], button, .stDownloadButton { display: none !important; } div[data-testid="stMainBlockContainer"] { padding: 0 !important; width: 100% !important; } }
         </style>
         """, unsafe_allow_html=True)
     else:
@@ -185,62 +143,15 @@ def apply_theme():
         * { font-family: 'Inter', sans-serif; }
         .stApp { background-color: #f3f4f6 !important; }
         [data-testid="stSidebar"] { background-color: #ffffff !important; border-right: 1px solid #e5e7eb; }
-        .metric-card {
-            background: #ffffff;
-            border-radius: 16px;
-            padding: 22px;
-            text-align: center;
-            border: 1px solid #e5e7eb;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-        }
-        .metric-card:hover {
-            transform: translateY(-4px);
-            border-color: #2563eb;
-            box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.1);
-        }
-        .metric-card h3 { color: #4b5563 !important; font-size: 14px; font-weight: 500; letter-spacing: 0.5px; margin-bottom: 8px; }
-        .metric-card h1 { color: #111827 !important; font-size: 32px; font-weight: 700; margin: 0; }
-        div.stButton > button {
-            background: linear-gradient(90deg, #2563eb, #1d4ed8) !important;
-            color: white !important;
-            border-radius: 10px !important;
-            border: none !important;
-            font-weight: 600 !important;
-            padding: 10px 24px !important;
-            transition: all 0.2s ease-in-out !important;
-            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2) !important;
-        }
-        div.stButton > button:hover { transform: scale(1.02) !important; box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4) !important; }
-        div[data-testid="stTextInput"] input, div[data-testid="stNumberInput"] input {
-            background-color: #ffffff !important;
-            color: #111827 !important;
-            border: 1px solid #d1d5db !important;
-            border-radius: 10px !important;
-        }
-        .login-box {
-            max-width: 400px;
-            margin: 80px auto;
-            padding: 40px;
-            border-radius: 20px;
-            background: #ffffff;
-            border: 1px solid #e5e7eb;
-            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-        }
+        .metric-card { background: #ffffff; border-radius: 16px; padding: 22px; text-align: center; border: 1px solid #e5e7eb; }
+        .login-box { max-width: 400px; margin: 80px auto; padding: 40px; border-radius: 20px; background: #ffffff; border: 1px solid #e5e7eb; }
         .stMarkdown, p, label, h1, h2, h3, h4, h5, h6, span { color: #111827 !important; }
-        div[data-testid="stRadio"] label { color: #374151 !important; }
-        button[data-baseweb="tab"] { font-size: 14px !important; font-weight: 600 !important; padding: 10px 16px !important; }
-        div[data-testid="stNotification"] { border-radius: 10px !important; margin-top: 15px; }
-
-        /* 🖨️ PDF PRINT LAYOUT MODIFICATION (LIGHT MODE) */
-        @media print {
-            div[data-testid="stSidebar"] { display: none !important; }
-            div[data-testid="stMainBlockContainer"] { padding: 0 !important; width: 100% !important; }
-            button, .stDownloadButton { display: none !important; }
-        }
+        @media print { div[data-testid="stSidebar"], button, .stDownloadButton { display: none !important; } div[data-testid="stMainBlockContainer"] { padding: 0 !important; width: 100% !important; } }
         </style>
         """, unsafe_allow_html=True)
+
 apply_theme()
+
 # ================== SESSION STATE ==================
 
 if "logged_in" not in st.session_state:
@@ -248,10 +159,34 @@ if "logged_in" not in st.session_state:
 if "username" not in st.session_state:
     st.session_state.username = ""
 
-# ================== MQTT (cached, one connection) ==================
+# ================== WHATSAPP ALERT LOGIC ==================
+
+def send_whatsapp_alert(gas_status):
+    """Sends hardware alert via Twilio API when ESP board detects gas."""
+    try:
+        from twilio.rest import Client
+        account_sid = st.secrets["TWILIO_ACCOUNT_SID"]
+        auth_token = st.secrets["TWILIO_AUTH_TOKEN"]
+        my_number = st.secrets["WHATSAPP_PHONE"]
+        
+        client = Client(account_sid, auth_token)
+        msg_body = f"🚨 *SMART SCHOOL EMERGENCY*\n\n⚠️ Gas Leak Detected!\n• Status: {gas_status}\n• Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        client.messages.create(
+            from_='whatsapp:+14155238886', 
+            body=msg_body,
+            to=f'whatsapp:{my_number}'
+        )
+    except Exception as e:
+        print(f"Twilio WhatsApp alert failed: {e}")
+
+# ================== MQTT LOGIC ==================
+
+GAS_LEAK_VALUES = {"leak", "gas leak", "gas detected", "danger", "1", "unsafe"}
 
 @st.cache_resource
 def get_mqtt_data():
+    alert_state = {"gas_leak_active": False}
     data = {feed: "—" for feed in FEEDS}
 
     def on_connect(client, userdata, flags, rc):
@@ -260,9 +195,24 @@ def get_mqtt_data():
 
     def on_message(client, userdata, msg):
         feed_name = msg.topic.split("/")[-1]
-        data[feed_name] = msg.payload.decode()
+        val = msg.payload.decode()
+        data[feed_name] = val
 
-    client = mqtt.Client()
+        # Hardware systems logic trigger for Gas Leak
+        if feed_name == "gas-status":
+            is_leak = str(val).strip().lower() in GAS_LEAK_VALUES
+            if is_leak and not alert_state["gas_leak_active"]:
+                send_whatsapp_alert(val)
+                alert_state["gas_leak_active"] = True
+            elif not is_leak:
+                alert_state["gas_leak_active"] = False
+
+    # Bug fix: Compatibility for newer paho-mqtt versions
+    try:
+        client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION1)
+    except AttributeError:
+        client = mqtt.Client()
+
     client.username_pw_set(AIO_USERNAME, AIO_KEY)
     client.on_connect = on_connect
     client.on_message = on_message
@@ -273,7 +223,7 @@ def get_mqtt_data():
         st.warning(f"Could not connect to Adafruit IO: {e}")
     return data
 
-# ================== LOGIN PAGE (WITH SQL INTERACTION) ==================
+# ================== LOGIN PAGE ==================
 
 def login_page():
     st.markdown("<h1 style='text-align:center; padding-top: 40px;'>🏫 Smart School Dashboard</h1>", unsafe_allow_html=True)
@@ -287,7 +237,6 @@ def login_page():
         pwd = st.text_input("Password", type="password", key="login_pwd")
         
         if st.button("Sign In", use_container_width=True, key="login_btn"):
-            # 🔍 SQL QUERY: Fetch password matching username
             conn = get_db_connection()
             cursor = conn.cursor()
             cursor.execute("SELECT password FROM users WHERE username = ?", (uid,))
@@ -315,58 +264,35 @@ def login_page():
             else:
                 conn = get_db_connection()
                 cursor = conn.cursor()
-                
-                # 🔍 SQL QUERY: Check if username already exists
                 cursor.execute("SELECT username FROM users WHERE username = ?", (new_uid,))
                 if cursor.fetchone():
                     st.error("This username is already registered")
                     conn.close()
                 else:
-                    # 📥 SQL QUERY: Insert new teacher record securely
                     cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (new_uid, new_pwd))
                     conn.commit()
                     conn.close()
-                    st.success(f"Account '{new_uid}' saved to Database! Slide back to login tab.")
+                    st.success(f"Account '{new_uid}' saved! Slide back to login tab.")
                 
     st.markdown("</div>", unsafe_allow_html=True)
-# Dataframe:
-def print_dataframe_button(df, class_name="Report"):
-    # Convert dataframe to HTML and strip newlines so it plays nicely with JavaScript
-    html_table = df.to_html(index=False).replace('\n', '')
 
-    # A safe identifier for use in HTML ids / JS function names (class names
-    # like "10-A" contain characters that aren't valid there otherwise)
+# ================== DYNAMIC PRINT FRAMEWORK ==================
+
+def print_dataframe_button(df, class_name="Report"):
+    html_table = df.to_html(index=False).replace('\n', '')
     safe_id = re.sub(r'[^a-zA-Z0-9_]', '_', str(class_name))
 
-    # Renders the table into a hidden area inside THIS component and prints
-    # that area directly - no popup window involved, so nothing can be
-    # blocked by a popup blocker and there's no nested <script> tag that
-    # could get cut off early by the HTML parser.
     components.html(f"""
         <div id="print-area-{safe_id}" style="display:none;">
             <h2>🏫 Class {class_name} Attendance Report</h2>
             {html_table}
         </div>
-
         <button onclick="printClass_{safe_id}()" style="
             background: linear-gradient(90deg, #10b981, #059669);
-            color: white; border-radius: 12px; border: none;
-            font-family: 'Inter', sans-serif;
-            font-weight: 600; font-size: 16px; padding: 14px 28px; 
-            width: 100%; cursor: pointer; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);">
+            color: white; border-radius: 12px; border: none; font-weight: 600; 
+            font-size: 16px; padding: 14px 28px; width: 100%; cursor: pointer;">
             🖨️ Print Class {class_name} Data Table
         </button>
-
-        <style>
-            @media print {{
-                body > *:not(#print-area-{safe_id}) {{ display: none !important; }}
-                #print-area-{safe_id} {{ display: block !important; }}
-                table {{ border-collapse: collapse; width: 100%; }}
-                th, td {{ border: 1px solid #d1d5db; padding: 8px 12px; text-align: left; }}
-                th {{ background-color: #f3f4f6; font-weight: 600; }}
-            }}
-        </style>
-
         <script>
         function printClass_{safe_id}() {{
             document.getElementById("print-area-{safe_id}").style.display = "block";
@@ -381,13 +307,13 @@ def print_dataframe_button(df, class_name="Report"):
 def get_all_attendance():
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT date, teacher, class, present, total FROM attendance")
+    # Added 'id' to the query so we can target records for deletion
+    cursor.execute("SELECT id, date, teacher, class, present, total FROM attendance")
     rows = cursor.fetchall()
     conn.close()
-    return pd.DataFrame(rows, columns=["date", "teacher", "class", "present", "total"])
+    return pd.DataFrame(rows, columns=["id", "date", "teacher", "class", "present", "total"])
 
 def attendance_page():
-    # 1. TEACHER ENTRY FORM (Hidden from Admin/Principal)
     if st.session_state.username not in ["Admin", "Principal"]:
         st.header("📋 Attendance Entry")
         col1, col2, col3 = st.columns(3)
@@ -409,7 +335,7 @@ def attendance_page():
                 st.success(f"Attendance saved for {class_name}")
         st.divider()
 
-    # 2. PRINCIPAL / ADMIN VIEW
+    # Admin/Principal View
     if st.session_state.username in ["Admin", "Principal"]:
         st.title("👑 Institutional Attendance Center")
 
@@ -419,50 +345,65 @@ def attendance_page():
             for cls in unique_classes:
                 st.markdown(f"## 🏫 Class {cls} Logs")
                 class_filtered_df = df[df["class"] == cls].sort_values("date", ascending=False)
-                st.dataframe(class_filtered_df, use_container_width=True)
                 
-                csv_data = class_filtered_df.to_csv(index=False).encode('utf-8')
-                st.download_button(label=f"📥 Export Class {cls}", data=csv_data, file_name=f"Class_{cls}.csv", mime="text/csv", key=f"dl_{cls}")
+                # Hide the structural database ID from the UI table for cleaner viewing
+                display_df = class_filtered_df.drop(columns=["id"])
+                st.dataframe(display_df, use_container_width=True)
                 
-                # Call print function
-                print_dataframe_button(class_filtered_df, cls)
-                
+                csv_data = display_df.to_csv(index=False).encode('utf-8')
+                st.download_button(label=f"📥 Export Class {cls}", data=csv_data, file_name=f"Class_{cls}.csv", key=f"dl_{cls}")
+                print_dataframe_button(display_df, cls)
                 st.markdown("<div style='margin-bottom: 40px; border-bottom: 2px dashed #333a52;'></div>", unsafe_allow_html=True)
-        else:
-            st.info("No attendance records have been submitted yet. The dashboard is waiting for teachers to enter data.")
             
-    # 3. NORMAL TEACHER VIEW
+            # --- NEW FEATURE: ATTENDANCE RECORD DELETION ---
+            st.subheader("🗑️ Database Management: Delete Records")
+            st.markdown("Select a specific attendance log to permanently remove it from the system.")
+            
+            # Format a string array to let the Admin easily identify which log to delete
+            record_list = df.apply(lambda r: f"ID: {r['id']} | Date: {r['date']} | Class: {r['class']} | Teacher: {r['teacher']}", axis=1).tolist()
+            
+            selected_record = st.selectbox("Target Log to Purge:", record_list)
+            if st.button("Permanently Delete Selected Log", type="primary"):
+                # Extract just the integer ID back out of the string
+                record_id = int(selected_record.split("|")[0].replace("ID:", "").strip())
+                
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM attendance WHERE id = ?", (record_id,))
+                conn.commit()
+                conn.close()
+                
+                st.success(f"Record #{record_id} successfully purged.")
+                st.rerun()
+
+        else:
+            st.info("No attendance records have been submitted yet.")
+            
+    # Normal Teacher View
     else:
         st.markdown(f"### 📖 Your Class Submissions ({st.session_state.username})")
         df = get_all_attendance()
         teacher_df = df[df["teacher"] == st.session_state.username].sort_values("date", ascending=False) if not df.empty else df
         if not teacher_df.empty: 
-            st.dataframe(teacher_df, use_container_width=True)
+            st.dataframe(teacher_df.drop(columns=["id"]), use_container_width=True)
         else: 
             st.info("No records submitted yet.")
 
-            
 # ================== CANTEEN PAGE ==================
 
 def canteen_page():
     st.header("🍽️ Canteen Live Status")
     st.markdown("Monitoring live metrics from Adafruit IO MQTT feeds.")
     
-    # Fetch the live data dictionary from your cached MQTT connection
     data = get_mqtt_data()
-    
     st.markdown("<div style='padding-top:20px;'></div>", unsafe_allow_html=True)
     
-    # Display the feeds in a clean 3-column grid
     col1, col2, col3 = st.columns(3)
-    
     with col1:
         st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
         st.metric("💨 Gas Status", data.get("gas-status", "—"))
         st.markdown("</div>", unsafe_allow_html=True)
-        
         st.markdown("<div style='padding-top:20px;'></div>", unsafe_allow_html=True)
-        
         st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
         st.metric("🔄 Fan Status", data.get("fan-status", "—"))
         st.markdown("</div>", unsafe_allow_html=True)
@@ -471,9 +412,7 @@ def canteen_page():
         st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
         st.metric("🗑️ Waste Bin", data.get("waste-bin", "—"))
         st.markdown("</div>", unsafe_allow_html=True)
-        
         st.markdown("<div style='padding-top:20px;'></div>", unsafe_allow_html=True)
-        
         st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
         st.metric("🚰 Valve Status", data.get("valve-status", "—"))
         st.markdown("</div>", unsafe_allow_html=True)
@@ -482,9 +421,7 @@ def canteen_page():
         st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
         st.metric("❤️ Kitchen Health", data.get("kitchen-health", "—"))
         st.markdown("</div>", unsafe_allow_html=True)
-        
         st.markdown("<div style='padding-top:20px;'></div>", unsafe_allow_html=True)
-        
         st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
         st.metric("📋 Event Log", data.get("event-log", "—"))
         st.markdown("</div>", unsafe_allow_html=True)
@@ -492,6 +429,7 @@ def canteen_page():
     st.divider()
     if st.button("🔄 Force Refresh Sensor Data"):
         st.rerun()
+
 # ================== USER MANAGEMENT PAGE ==================
 
 def users_page():
@@ -504,14 +442,12 @@ def users_page():
     conn.close()
 
     st.dataframe(df_users, use_container_width=True)
-
     st.divider()
     st.subheader("❌ Remove User Access Profile")
     
     current_user_lower = st.session_state.username.lower()
-    
-    # Filter list: Remove self, and if user is Principal, hide 'admin'
     active_profile_list = []
+    
     for user in df_users["username"].tolist():
         u_lower = user.lower()
         if u_lower == current_user_lower: continue
@@ -528,21 +464,20 @@ def users_page():
             conn.close()
             st.rerun()
 
-            
+# ================== ROUTER ==================
+
 def main_app():
     with st.sidebar:
         st.markdown(f"### 👋 {st.session_state.username}")
         
-        # 🔒 ADVANCED ROLE-BASED ACCESS CONTROL
-        # Normal teachers can only see Attendance. Admin and Principal get extra tabs.
-        if st.session_state.username in ["admin", "Principal"]:
+        # Bug Fix applied here: Changed "admin" to "Admin" to match initialization case
+        if st.session_state.username in ["Admin", "Principal"]:
             page = st.radio("Navigate", ["Attendance", "Canteen Dashboard", "User Management"])
         else:
             page = "Attendance"
             st.info("🔒 Advanced panels are restricted to Management.")
             
         st.divider()
-        
         is_dark = st.toggle("🌙 Dark Mode", value=(st.session_state.theme == "dark"))
         if is_dark != (st.session_state.theme == "dark"):
             st.session_state.theme = "dark" if is_dark else "light"
@@ -554,14 +489,12 @@ def main_app():
             st.session_state.username = ""
             st.rerun()
 
-    # --- ROUTING LOGIC ENGINE ---
     if page == "Attendance":
         attendance_page()
     elif page == "Canteen Dashboard":
         canteen_page()
     elif page == "User Management":
         users_page()
-# ================== ROUTER ==================
 
 if st.session_state.logged_in:
     main_app()
