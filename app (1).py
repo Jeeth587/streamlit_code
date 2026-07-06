@@ -2,9 +2,12 @@
 SMART SCHOOL DASHBOARD
 - Login system with persistent Turso (SQLite-compatible) database
 - Teachers enter attendance (saved to the same Turso database)
-- Live ESP canteen data (Adafruit IO via MQTT)
+- Live ESP32 canteen data (Adafruit IO via MQTT):
+    * Smart Waste Bin  (ultrasonic level sensor + GPS location)
+    * Smart LPG Monitor (HX711 load-cell cylinder weight, booking status,
+      days remaining, event log)
 - Admin/Principal Attendance Deletion
-- Twilio WhatsApp Gas Leak Alerts
+- Twilio WhatsApp Low-LPG Alerts
 """
 
 import streamlit as st
@@ -24,7 +27,24 @@ AIO_KEY = st.secrets["AIO_KEY"]
 TURSO_DATABASE_URL = st.secrets["TURSO_DATABASE_URL"]
 TURSO_AUTH_TOKEN = st.secrets["TURSO_AUTH_TOKEN"]
 
-FEEDS = ["gas-status", "waste-bin", "kitchen-health", "fan-status", "valve-status", "event-log"]
+# Adafruit IO feed keys exactly as published by the two ESP32 sketches
+# (waste.ino -> Drainage / DrainageLocation, sketch_jul6a.ino -> the rest).
+# NOTE: double-check these against the exact feed keys shown on your
+# Adafruit IO dashboard (Adafruit sometimes lowercases feed keys).
+FEED_TOPICS = {
+    "waste_status":    "Drainage",          # waste.ino  -> "WASTE BIN FULL" when full
+    "waste_location":  "DrainageLocation",  # waste.ino  -> "lat,lon,alt,speed"
+    "cylinder_weight": "cylinder-weight",   # sketch_jul6a.ino -> float kg
+    "booking_status":  "booking-status",    # sketch_jul6a.ino -> "BOOKED" / "NOT BOOKED"
+    "days_left":       "days-left",         # sketch_jul6a.ino -> int
+    "event_log":       "event-log",         # sketch_jul6a.ino -> free-text log messages
+}
+
+# Matches the low-gas threshold in sketch_jul6a.ino (weight <= 3.0kg)
+LOW_GAS_THRESHOLD_KG = 3.0
+# Approximate full weight of a domestic LPG cylinder (gas only) - used just
+# to draw the progress bar; adjust to match your actual cylinder.
+FULL_CYLINDER_WEIGHT_KG = 14.2
 
 st.set_page_config(page_title="School Dashboard", page_icon="🏫", layout="wide")
 
@@ -161,8 +181,8 @@ if "username" not in st.session_state:
 
 # ================== WHATSAPP ALERT LOGIC ==================
 
-def send_whatsapp_alert(gas_status):
-    """Sends hardware alert via Twilio API when ESP board detects gas."""
+def send_whatsapp_alert(message):
+    """Sends an alert via Twilio WhatsApp when the LPG cylinder runs critically low."""
     try:
         from twilio.rest import Client
         account_sid = st.secrets["TWILIO_ACCOUNT_SID"]
@@ -170,7 +190,7 @@ def send_whatsapp_alert(gas_status):
         my_number = st.secrets["WHATSAPP_PHONE"]
         
         client = Client(account_sid, auth_token)
-        msg_body = f"🚨 *SMART SCHOOL EMERGENCY*\n\n⚠️ Gas Leak Detected!\n• Status: {gas_status}\n• Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        msg_body = f"🚨 *SMART CANTEEN ALERT*\n\n⚠️ {message}\n• Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         
         client.messages.create(
             from_='whatsapp:+14155238886', 
@@ -182,30 +202,60 @@ def send_whatsapp_alert(gas_status):
 
 # ================== MQTT LOGIC ==================
 
-GAS_LEAK_VALUES = {"leak", "gas leak", "gas detected", "danger", "1", "unsafe"}
-
 @st.cache_resource
 def get_mqtt_data():
-    alert_state = {"gas_leak_active": False}
-    data = {feed: "—" for feed in FEEDS}
+    alert_state = {"low_gas_alert_active": False}
+    data = {
+        "waste_status": "—",
+        "waste_location": None,   # dict: {"lat", "lon", "alt", "speed"} once received
+        "cylinder_weight": "—",
+        "booking_status": "—",
+        "days_left": "—",
+        "event_log": "—",
+        "event_log_history": [],  # rolling list of recent {"time", "message"} entries
+    }
 
     def on_connect(client, userdata, flags, rc):
-        for feed in FEEDS:
-            client.subscribe(f"{AIO_USERNAME}/feeds/{feed}")
+        for topic in FEED_TOPICS.values():
+            client.subscribe(f"{AIO_USERNAME}/feeds/{topic}")
 
     def on_message(client, userdata, msg):
         feed_name = msg.topic.split("/")[-1]
         val = msg.payload.decode()
-        data[feed_name] = val
 
-        # Hardware systems logic trigger for Gas Leak
-        if feed_name == "gas-status":
-            is_leak = str(val).strip().lower() in GAS_LEAK_VALUES
-            if is_leak and not alert_state["gas_leak_active"]:
-                send_whatsapp_alert(val)
-                alert_state["gas_leak_active"] = True
-            elif not is_leak:
-                alert_state["gas_leak_active"] = False
+        if feed_name == FEED_TOPICS["waste_status"]:
+            data["waste_status"] = val
+
+        elif feed_name == FEED_TOPICS["waste_location"]:
+            try:
+                lat, lon, alt, spd = (float(x) for x in val.split(","))
+                data["waste_location"] = {"lat": lat, "lon": lon, "alt": alt, "speed": spd}
+            except (ValueError, TypeError):
+                pass
+
+        elif feed_name == FEED_TOPICS["cylinder_weight"]:
+            data["cylinder_weight"] = val
+            try:
+                weight = float(val)
+                is_low = weight <= LOW_GAS_THRESHOLD_KG
+                if is_low and not alert_state["low_gas_alert_active"]:
+                    send_whatsapp_alert(f"LPG cylinder critically low: {weight:.2f} kg remaining")
+                    alert_state["low_gas_alert_active"] = True
+                elif not is_low:
+                    alert_state["low_gas_alert_active"] = False
+            except ValueError:
+                pass
+
+        elif feed_name == FEED_TOPICS["booking_status"]:
+            data["booking_status"] = val
+
+        elif feed_name == FEED_TOPICS["days_left"]:
+            data["days_left"] = val
+
+        elif feed_name == FEED_TOPICS["event_log"]:
+            data["event_log"] = val
+            data["event_log_history"].insert(0, {"time": datetime.now().strftime("%H:%M:%S"), "message": val})
+            data["event_log_history"] = data["event_log_history"][:15]
 
     # Bug fix: Compatibility for newer paho-mqtt versions
     try:
@@ -393,39 +443,79 @@ def attendance_page():
 
 def canteen_page():
     st.header("🍽️ Canteen Live Status")
-    st.markdown("Monitoring live metrics from Adafruit IO MQTT feeds.")
-    
+    st.markdown("Live data from the Smart Waste Bin and Smart LPG Cylinder Monitor (Adafruit IO).")
+
     data = get_mqtt_data()
-    st.markdown("<div style='padding-top:20px;'></div>", unsafe_allow_html=True)
-    
+    st.markdown("<div style='padding-top:10px;'></div>", unsafe_allow_html=True)
+
+    # ---------------- Waste Bin ----------------
+    st.subheader("🗑️ Waste Bin Monitor")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
+        status = data.get("waste_status", "—")
+        if status == "—":
+            display_status = "—"
+        elif status == "WASTE BIN FULL":
+            display_status = "🔴 FULL"
+        else:
+            display_status = "🟢 OK"
+        st.metric("Bin Status", display_status)
+        st.markdown("</div>", unsafe_allow_html=True)
+    with col2:
+        st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
+        loc = data.get("waste_location")
+        loc_display = f"{loc['lat']:.5f}, {loc['lon']:.5f}" if loc else "—"
+        st.metric("📍 Last Known Location", loc_display)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    if data.get("waste_location"):
+        loc = data["waste_location"]
+        st.map(pd.DataFrame([{"lat": loc["lat"], "lon": loc["lon"]}]), zoom=15, size=20)
+        st.markdown(f"[Open in Google Maps ↗](https://www.google.com/maps?q={loc['lat']},{loc['lon']})")
+
+    st.divider()
+
+    # ---------------- LPG Cylinder ----------------
+    st.subheader("🔥 Smart LPG Cylinder Monitor")
     col1, col2, col3 = st.columns(3)
     with col1:
         st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-        st.metric("💨 Gas Status", data.get("gas-status", "—"))
+        try:
+            weight_display = f"{float(data.get('cylinder_weight')):.2f} kg"
+        except (TypeError, ValueError):
+            weight_display = "—"
+        st.metric("⚖️ Cylinder Weight", weight_display)
         st.markdown("</div>", unsafe_allow_html=True)
-        st.markdown("<div style='padding-top:20px;'></div>", unsafe_allow_html=True)
-        st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-        st.metric("🔄 Fan Status", data.get("fan-status", "—"))
-        st.markdown("</div>", unsafe_allow_html=True)
-
     with col2:
         st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-        st.metric("🗑️ Waste Bin", data.get("waste-bin", "—"))
+        st.metric("📅 Booking Status", data.get("booking_status", "—"))
         st.markdown("</div>", unsafe_allow_html=True)
-        st.markdown("<div style='padding-top:20px;'></div>", unsafe_allow_html=True)
-        st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-        st.metric("🚰 Valve Status", data.get("valve-status", "—"))
-        st.markdown("</div>", unsafe_allow_html=True)
-
     with col3:
         st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-        st.metric("❤️ Kitchen Health", data.get("kitchen-health", "—"))
+        st.metric("⏳ Days Left", data.get("days_left", "—"))
         st.markdown("</div>", unsafe_allow_html=True)
-        st.markdown("<div style='padding-top:20px;'></div>", unsafe_allow_html=True)
-        st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-        st.metric("📋 Event Log", data.get("event-log", "—"))
-        st.markdown("</div>", unsafe_allow_html=True)
-        
+
+    try:
+        weight_val = float(data.get("cylinder_weight"))
+        pct = max(0.0, min(1.0, weight_val / FULL_CYLINDER_WEIGHT_KG))
+        st.markdown("<div style='padding-top:16px;'></div>", unsafe_allow_html=True)
+        st.progress(pct, text=f"{weight_val:.2f} kg / {FULL_CYLINDER_WEIGHT_KG:.1f} kg (approx. full)")
+        if weight_val <= LOW_GAS_THRESHOLD_KG:
+            st.warning(f"⚠️ Cylinder weight is at or below the {LOW_GAS_THRESHOLD_KG:.1f} kg low-gas threshold.")
+    except (TypeError, ValueError):
+        pass
+
+    st.divider()
+
+    # ---------------- Event Log ----------------
+    st.subheader("📋 Recent Events")
+    history = data.get("event_log_history", [])
+    if history:
+        st.dataframe(pd.DataFrame(history), use_container_width=True, hide_index=True)
+    else:
+        st.info("No events logged yet.")
+
     st.divider()
     if st.button("🔄 Force Refresh Sensor Data"):
         st.rerun()
